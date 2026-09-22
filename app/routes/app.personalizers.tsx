@@ -25,12 +25,16 @@ export default function Personalizers() {
   return (
     <s-page heading="Personalizers">
       <s-section>
+        <s-paragraph>
+          <s-link href="/app/personalizers/new">Create personalizer</s-link>
+        </s-paragraph>
+
         {templates.length === 0 ? (
           <s-empty-state heading="No personalizers yet">
             <s-paragraph slot="subheading">
               Personalizers let you define what customers can customize —
               text, initials, monograms, numbers — along with fonts, colors,
-              and rules. Creating one is coming in the next build phase.
+              and rules.
             </s-paragraph>
           </s-empty-state>
         ) : (
@@ -45,7 +49,11 @@ export default function Personalizers() {
             <s-table-body>
               {templates.map((template) => (
                 <s-table-row key={template.id}>
-                  <s-table-cell>{template.name}</s-table-cell>
+                  <s-table-cell>
+                    <s-link href={`/app/personalizers/${template.id}`}>
+                      {template.name}
+                    </s-link>
+                  </s-table-cell>
                   <s-table-cell>{template.type}</s-table-cell>
                   <s-table-cell>{template.effect}</s-table-cell>
                   <s-table-cell>{template.status}</s-table-cell>
