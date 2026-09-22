@@ -7,6 +7,16 @@ import type {
 import db from "../db.server";
 import { getPersonalizationTypeOption } from "../lib/personalization-types";
 
+export async function assertTemplateOwnership(shopId: string, templateId: string) {
+  const template = await db.personalizationTemplate.findUnique({
+    where: { id: templateId, shopId },
+    select: { id: true },
+  });
+  if (!template) {
+    throw new Response("Personalizer not found", { status: 404 });
+  }
+}
+
 export interface TemplateRuleInput {
   name: string;
   effect: PersonalizationEffect;

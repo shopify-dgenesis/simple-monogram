@@ -1,15 +1,6 @@
 import db from "../db.server";
 import type { ZoneInput } from "../lib/zone-form.server";
-
-export async function assertTemplateOwnership(shopId: string, templateId: string) {
-  const template = await db.personalizationTemplate.findUnique({
-    where: { id: templateId, shopId },
-    select: { id: true },
-  });
-  if (!template) {
-    throw new Response("Personalizer not found", { status: 404 });
-  }
-}
+import { assertTemplateOwnership } from "./template.server";
 
 export async function upsertPreviewZone(
   shopId: string,
