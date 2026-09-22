@@ -26,7 +26,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       fields: true,
       allowedFonts: { select: { id: true } },
       allowedColorPalettes: { select: { id: true } },
-      _count: { select: { productAssignments: true } },
+      _count: { select: { productAssignments: true, previewZones: true } },
     },
   });
 
@@ -139,6 +139,17 @@ export default function EditPersonalizer() {
           palettes={palettes}
           errors={actionData?.errors}
         />
+      </s-section>
+
+      <s-section heading="Placement" slot="aside">
+        <s-paragraph>
+          {template._count.previewZones === 0
+            ? "No products have a placement zone yet."
+            : `${template._count.previewZones} product(s) have a placement zone.`}
+        </s-paragraph>
+        <s-link href={`/app/personalizers/${template.id}/studio`}>
+          Open placement studio
+        </s-link>
       </s-section>
 
       <s-section heading="Manage" slot="aside">
