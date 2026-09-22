@@ -13,5 +13,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await db.session.deleteMany({ where: { shop } });
   }
 
+  await db.shop.updateMany({
+    where: { domain: shop },
+    data: { uninstalledAt: new Date() },
+  });
+
   return new Response();
 };
