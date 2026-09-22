@@ -1,34 +1,459 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
 
-// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
-// enough when changing adapters.
-// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
+// ---------------------------------------------------------------------------
+// Shopify auth session storage (managed by @shopify/shopify-app-session-storage-prisma)
+// ---------------------------------------------------------------------------
+
 model Session {
-  id            String    @id
-  shop          String
-  state         String
-  isOnline      Boolean   @default(false)
-  scope         String?
-  expires       DateTime?
-  accessToken   String
-  userId        BigInt?
-  firstName     String?
-  lastName      String?
-  email         String?
-  accountOwner  Boolean   @default(false)
-  locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
+
+  @@index([shop])
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy
+// ---------------------------------------------------------------------------
+
+model Shop {
+  id             String    @id @default(cuid())
+  domain         String    @unique
+  shopifyShopId  String?   @unique
+  plan           Plan      @default(FREE)
+  installedAt    DateTime  @default(now())
+  uninstalledAt  DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  subscription       Subscription?
+  settings            AppSettings?
+  fonts               Font[]
+  colorPalettes       ColorPalette[]
+  templates           PersonalizationTemplate[]
+  productAssignments  ProductAssignment[]
+  customizations      Customization[]
+  analyticsEvents     AnalyticsEvent[]
+}
+
+enum Plan {
+  FREE
+  PRO
+}
+
+// ---------------------------------------------------------------------------
+// Billing
+// ---------------------------------------------------------------------------
+
+model Subscription {
+  id                String             @id @default(cuid())
+  shopId            String             @unique
+  shop              Shop               @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopifySubscriptionId String?
+  plan              Plan               @default(FREE)
+  status            SubscriptionStatus @default(ACTIVE)
+  currentPeriodEnd  DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  @@index([shopId])
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  FROZEN
+  PENDING
+}
+
+// ---------------------------------------------------------------------------
+// Shop-level app settings / widget configuration
+// ---------------------------------------------------------------------------
+
+model AppSettings {
+  id               String   @id @default(cuid())
+  shopId           String   @unique
+  shop             Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  brandingEnabled  Boolean  @default(true)
+  useThemeStyling  Boolean  @default(true)
+  widgetConfig     Json     @default("{}")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Fonts
+// ---------------------------------------------------------------------------
+
+model Font {
+  id         String       @id @default(cuid())
+  shopId     String?
+  shop       Shop?        @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name       String
+  category   FontCategory
+  family     String
+  fileUrl    String?
+  format     String?
+  isSystem   Boolean      @default(false)
+  isActive   Boolean      @default(true)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  templatesAsDefault PersonalizationTemplate[] @relation("TemplateDefaultFont")
+  templatesAllowed   PersonalizationTemplate[] @relation("TemplateAllowedFonts")
+  customizations     Customization[]
+  analyticsEvents    AnalyticsEvent[]
+
+  @@index([shopId])
+  @@index([isSystem])
+}
+
+enum FontCategory {
+  SERIF
+  SANS_SERIF
+  SCRIPT
+  SIGNATURE
+  HANDWRITTEN
+  BLOCK
+  VARSITY
+  MONOGRAM
+}
+
+// ---------------------------------------------------------------------------
+// Color palettes
+// ---------------------------------------------------------------------------
+
+model ColorPalette {
+  id        String   @id @default(cuid())
+  shopId    String?
+  shop      Shop?    @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name      String
+  isSystem  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  colors             PaletteColor[]
+  templatesAllowed   PersonalizationTemplate[] @relation("TemplateAllowedPalettes")
+
+  @@index([shopId])
+  @@index([isSystem])
+}
+
+model PaletteColor {
+  id         String       @id @default(cuid())
+  paletteId  String
+  palette    ColorPalette @relation(fields: [paletteId], references: [id], onDelete: Cascade)
+  name       String
+  hex        String
+  sortOrder  Int          @default(0)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  customizations   Customization[]
+  analyticsEvents  AnalyticsEvent[]
+  variantRules     VariantPreviewRule[] @relation("VariantAllowedColors")
+
+  @@index([paletteId])
+}
+
+// ---------------------------------------------------------------------------
+// Personalization templates
+// ---------------------------------------------------------------------------
+
+model PersonalizationTemplate {
+  id                   String               @id @default(cuid())
+  shopId               String
+  shop                 Shop                 @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name                 String
+  type                 PersonalizationType
+  status               TemplateStatus       @default(ACTIVE)
+  effect               PersonalizationEffect @default(PRINT)
+  defaultFontId        String?
+  defaultFont          Font?                @relation("TemplateDefaultFont", fields: [defaultFontId], references: [id], onDelete: SetNull)
+  confirmationRequired Boolean              @default(false)
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  fields              PersonalizationField[]
+  previewZones        PreviewZone[]
+  productAssignments  ProductAssignment[]
+  customizations      Customization[]
+  analyticsEvents     AnalyticsEvent[]
+  allowedFonts        Font[]                 @relation("TemplateAllowedFonts")
+  allowedColorPalettes ColorPalette[]        @relation("TemplateAllowedPalettes")
+
+  @@index([shopId])
+}
+
+enum PersonalizationType {
+  STANDARD_TEXT
+  SINGLE_INITIAL
+  TWO_INITIALS
+  THREE_INITIALS
+  BASIC_MONOGRAM
+  NUMBER
+  NAME_AND_DATE
+}
+
+enum TemplateStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum PersonalizationEffect {
+  PRINT
+  ENGRAVING
+  EMBROIDERY
+  FOIL
+  DEBOSS
+  EMBOSS
+}
+
+model PersonalizationField {
+  id                      String              @id @default(cuid())
+  templateId              String
+  template                PersonalizationTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  key                     String
+  label                   String
+  inputType               FieldInputType      @default(TEXT)
+  required                Boolean             @default(true)
+  minLength               Int?
+  maxLength               Int?
+  allowedCharacters       AllowedCharacters   @default(LETTERS_AND_NUMBERS)
+  customAllowedPattern    String?
+  transform               TextTransform       @default(NONE)
+  disallowLeadingSpaces   Boolean             @default(true)
+  disallowTrailingSpaces  Boolean             @default(true)
+  collapseDuplicateSpaces Boolean             @default(true)
+  disableEmoji            Boolean             @default(true)
+  sortOrder               Int                 @default(0)
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+
+  @@unique([templateId, key])
+  @@index([templateId])
+}
+
+enum FieldInputType {
+  TEXT
+  NUMBER
+  DATE
+}
+
+enum AllowedCharacters {
+  LETTERS_ONLY
+  NUMBERS_ONLY
+  LETTERS_AND_NUMBERS
+  CUSTOM
+}
+
+enum TextTransform {
+  NONE
+  UPPERCASE
+  LOWERCASE
+}
+
+// ---------------------------------------------------------------------------
+// Visual Placement Studio
+// ---------------------------------------------------------------------------
+
+model PreviewZone {
+  id               String                @id @default(cuid())
+  templateId       String
+  template         PersonalizationTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  shopifyProductId String
+  imageUrl         String?
+  x                Float
+  y                Float
+  width            Float
+  height           Float
+  rotation         Float                 @default(0)
+  alignment        ZoneAlignment         @default(CENTER)
+  textAlign        ZoneAlignment         @default(CENTER)
+  minFontSize      Float
+  maxFontSize      Float
+  defaultFontSize  Float
+  autoFit          Boolean               @default(true)
+  opacity          Float                 @default(1)
+  effect           PersonalizationEffect?
+  mobileOverride   Json?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  variantRules VariantPreviewRule[]
+
+  @@unique([templateId, shopifyProductId])
+  @@index([templateId])
+  @@index([shopifyProductId])
+}
+
+enum ZoneAlignment {
+  LEFT
+  CENTER
+  RIGHT
+}
+
+model VariantPreviewRule {
+  id                String      @id @default(cuid())
+  previewZoneId     String
+  previewZone       PreviewZone @relation(fields: [previewZoneId], references: [id], onDelete: Cascade)
+  shopifyVariantId  String
+  previewImageUrl   String?
+  geometryOverride  Json?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  allowedColors PaletteColor[] @relation("VariantAllowedColors")
+
+  @@unique([previewZoneId, shopifyVariantId])
+  @@index([previewZoneId])
+}
+
+// ---------------------------------------------------------------------------
+// Product assignment
+// ---------------------------------------------------------------------------
+
+model ProductAssignment {
+  id               String              @id @default(cuid())
+  shopId           String
+  shop             Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  templateId       String
+  template         PersonalizationTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  shopifyProductId String
+  assignmentSource AssignmentSource    @default(MANUAL)
+  sourceRef        String?
+  enabled          Boolean             @default(true)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@unique([shopId, shopifyProductId])
+  @@index([shopId])
+  @@index([templateId])
+  @@index([shopId, enabled])
+}
+
+enum AssignmentSource {
+  MANUAL
+  COLLECTION
+  TAG
+  PRODUCT_TYPE
+}
+
+// ---------------------------------------------------------------------------
+// Customer customizations (cart/order fulfillment records)
+// ---------------------------------------------------------------------------
+
+model Customization {
+  id                  String        @id @default(cuid())
+  internalRef         String        @unique
+  shopId              String
+  shop                Shop          @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopifyProductId    String
+  shopifyVariantId    String
+  templateId          String?
+  template            PersonalizationTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  templateNameSnapshot String
+  fieldValues         Json
+  displayText         String
+  fontId              String?
+  font                Font?         @relation(fields: [fontId], references: [id], onDelete: SetNull)
+  fontNameSnapshot    String?
+  colorId             String?
+  color               PaletteColor? @relation(fields: [colorId], references: [id], onDelete: SetNull)
+  colorNameSnapshot   String?
+  colorHexSnapshot    String?
+  effect              PersonalizationEffect
+  placement           Json
+  confirmed           Boolean       @default(false)
+  shopifyCartToken    String?
+  shopifyLineItemId   String?
+  shopifyOrderId      String?
+  shopifyOrderName    String?
+  fulfillmentStatus   FulfillmentStatus @default(NEW)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  previewSnapshot PreviewSnapshot?
+
+  @@index([shopId])
+  @@index([shopifyOrderId])
+  @@index([shopId, fulfillmentStatus])
+}
+
+enum FulfillmentStatus {
+  NEW
+  PROCESSING
+  FULFILLED
+}
+
+model PreviewSnapshot {
+  id               String         @id @default(cuid())
+  publicRef        String         @unique
+  customizationId  String         @unique
+  customization    Customization  @relation(fields: [customizationId], references: [id], onDelete: Cascade)
+  imageUrl         String
+  productImageUrl  String?
+  width            Int?
+  height           Int?
+  createdAt        DateTime       @default(now())
+
+  @@index([customizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Analytics
+// ---------------------------------------------------------------------------
+
+model AnalyticsEvent {
+  id               String              @id @default(cuid())
+  shopId           String
+  shop             Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  type             AnalyticsEventType
+  shopifyProductId String?
+  shopifyVariantId String?
+  templateId       String?
+  template         PersonalizationTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  fontId           String?
+  font             Font?               @relation(fields: [fontId], references: [id], onDelete: SetNull)
+  colorId          String?
+  color            PaletteColor?       @relation(fields: [colorId], references: [id], onDelete: SetNull)
+  metadata         Json?
+  createdAt        DateTime            @default(now())
+
+  @@index([shopId, type, createdAt])
+  @@index([shopId, createdAt])
+}
+
+enum AnalyticsEventType {
+  CUSTOMIZER_VIEWED
+  CUSTOMIZER_STARTED
+  PERSONALIZATION_COMPLETED
+  PERSONALIZED_ADD_TO_CART
+  PERSONALIZED_ORDER
+  FONT_SELECTED
+  COLOR_SELECTED
+  TEMPLATE_USED
+  PRODUCT_PERSONALIZED
 }
