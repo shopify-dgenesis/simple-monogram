@@ -4,6 +4,15 @@
   var SVG_NS = "http://www.w3.org/2000/svg";
   var EMOJI_PATTERN = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}]/u;
 
+  var EFFECT_LABELS = {
+    PRINT: "Print",
+    ENGRAVING: "Engraving",
+    EMBROIDERY: "Embroidery",
+    FOIL: "Foil",
+    DEBOSS: "Deboss",
+    EMBOSS: "Emboss",
+  };
+
   var DEFAULT_ZONE = {
     x: 0.1,
     y: 0.42,
@@ -206,8 +215,26 @@
     return /^\d+$/.test(rawId) ? "gid://shopify/ProductVariant/" + rawId : rawId;
   }
 
-  function findVariantIdInput(root) {
-    var form = root.closest("form") || document.querySelector('form[action*="/cart/add"]');
+  // A page can have more than one form[action*="/cart/add"] (e.g. Dawn's
+  // installment-payment calculator uses one too), and our block isn't
+  // guaranteed to be nested inside the real product form's DOM subtree
+  // depending on the theme's section layout. The one reliable, near-
+  // universal cross-theme signal for the *real* add-to-cart form is the
+  // submit control itself: Shopify themes consistently name it "add".
+  function findCartForm(root) {
+    var addControl = document.querySelector('button[name="add"], input[name="add"]');
+    var formFromAddControl = addControl && addControl.closest("form");
+    if (formFromAddControl) return formFromAddControl;
+
+    var candidates = document.querySelectorAll('form[action*="/cart/add"]');
+    for (var i = 0; i < candidates.length; i++) {
+      if (candidates[i].querySelector('[name="id"]')) return candidates[i];
+    }
+
+    return root.closest("form") || candidates[0] || null;
+  }
+
+  function findVariantIdInput(form) {
     if (!form) return null;
     return form.querySelector('input[name="id"], select[name="id"]');
   }
@@ -236,8 +263,12 @@
       currentVariantId: null,
       overflow: false,
       swatchesEl: null,
+      ready: false,
+      lastFontSize: null,
+      preparedSignature: null,
     };
     var previewTarget = null; // { svg, text, container, mode: 'native' | 'safe' }
+    var cartForm = findCartForm(root);
 
     fetch("/apps/simple-monogram/proxy/config?productId=" + encodeURIComponent(productId), {
       headers: { Accept: "application/json" },
@@ -267,6 +298,7 @@
       buildOptions();
       setupPreviewTarget();
       setupVariantTracking();
+      setupCartIntegration();
 
       if (template.confirmationRequired) {
         confirmEl.hidden = false;
@@ -444,12 +476,12 @@
     }
 
     function setupVariantTracking() {
-      var input = findVariantIdInput(root);
+      var input = findVariantIdInput(cartForm);
       if (!input) return;
       state.currentVariantId = normalizeVariantGid(input.value);
 
-      var form = input.closest("form") || document;
-      form.addEventListener("change", function () {
+      var changeTarget = cartForm || document;
+      changeTarget.addEventListener("change", function () {
         setTimeout(function () {
           var newId = normalizeVariantGid(input.value);
           if (newId === state.currentVariantId) return;
@@ -516,6 +548,8 @@
         zone.defaultFontSize,
       );
       state.overflow = fit.overflow;
+      state.lastFontSize = fit.fontSize;
+      state.lastZone = zone;
     }
 
     function isValid() {
@@ -529,6 +563,7 @@
       var valid = isValid();
       var confirmed = !template.confirmationRequired || (confirmCheckbox && confirmCheckbox.checked);
       var ready = valid && confirmed && !state.overflow;
+      state.ready = ready;
 
       if (!valid) {
         statusEl.textContent = "";
@@ -562,6 +597,112 @@
             effect: (state.config.zone && state.config.zone.effect) || template.effect,
           },
         }),
+      );
+    }
+
+    function currentSignature() {
+      return JSON.stringify({
+        values: state.values,
+        fontId: state.selectedFontId,
+        colorId: state.selectedColorId,
+        confirmed: confirmCheckbox ? confirmCheckbox.checked : true,
+      });
+    }
+
+    function clearInjectedProperties(form) {
+      form.querySelectorAll('[data-sm-property="1"]').forEach(function (el) {
+        el.remove();
+      });
+    }
+
+    function addHiddenInput(form, name, value) {
+      var input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = value;
+      input.setAttribute("data-sm-property", "1");
+      form.appendChild(input);
+    }
+
+    function injectHiddenProperties(form, result) {
+      clearInjectedProperties(form);
+      addHiddenInput(form, "properties[Personalization]", result.displayText);
+      if (result.fontName) addHiddenInput(form, "properties[Font]", result.fontName);
+      if (result.colorName) addHiddenInput(form, "properties[Color]", result.colorName);
+      addHiddenInput(form, "properties[Style]", EFFECT_LABELS[result.effect] || result.effect);
+      addHiddenInput(form, "properties[_simple_monogram_id]", result.internalRef);
+      addHiddenInput(form, "properties[_preview_id]", result.previewRef);
+    }
+
+    function createCustomizationRecord() {
+      var zone = state.lastZone || DEFAULT_ZONE;
+      return fetch("/apps/simple-monogram/proxy/customization", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          shopifyProductId: productId,
+          shopifyVariantId: state.currentVariantId,
+          fieldValues: state.values,
+          fontId: state.selectedFontId,
+          colorId: state.selectedColorId,
+          confirmed: confirmCheckbox ? confirmCheckbox.checked : true,
+          placement: {
+            x: zone.x,
+            y: zone.y,
+            width: zone.width,
+            height: zone.height,
+            rotation: zone.rotation,
+            fontSize: state.lastFontSize || zone.defaultFontSize,
+          },
+        }),
+      }).then(function (response) {
+        if (!response.ok) throw new Error("Failed to save personalization");
+        return response.json();
+      });
+    }
+
+    function setupCartIntegration() {
+      var form = cartForm;
+      if (!form) return;
+
+      form.addEventListener(
+        "submit",
+        function (event) {
+          if (!state.ready || !state.currentVariantId) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            errorEl.textContent =
+              errorEl.textContent || "Please complete your personalization before adding to cart.";
+            errorEl.hidden = false;
+            root.scrollIntoView({ behavior: "smooth", block: "center" });
+            return;
+          }
+
+          var signature = currentSignature();
+          if (state.preparedSignature === signature) {
+            return; // Hidden properties already match current state — let submission proceed.
+          }
+
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          var submitter = event.submitter;
+
+          createCustomizationRecord()
+            .then(function (result) {
+              injectHiddenProperties(form, result);
+              state.preparedSignature = signature;
+              if (form.requestSubmit) {
+                form.requestSubmit(submitter || undefined);
+              } else {
+                form.submit();
+              }
+            })
+            .catch(function () {
+              errorEl.textContent = "Something went wrong preparing your personalization. Please try again.";
+              errorEl.hidden = false;
+            });
+        },
+        true,
       );
     }
   }

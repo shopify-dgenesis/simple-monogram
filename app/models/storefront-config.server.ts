@@ -1,7 +1,11 @@
 import db from "../db.server";
 
+export function normalizeGid(rawId: string, resourceType: string): string {
+  return /^\d+$/.test(rawId) ? `gid://shopify/${resourceType}/${rawId}` : rawId;
+}
+
 export function normalizeProductGid(rawId: string): string {
-  return /^\d+$/.test(rawId) ? `gid://shopify/Product/${rawId}` : rawId;
+  return normalizeGid(rawId, "Product");
 }
 
 export type StorefrontConfigResult =
