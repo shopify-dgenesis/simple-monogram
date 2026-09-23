@@ -1,7 +1,25 @@
 (function () {
   "use strict";
 
+  var SVG_NS = "http://www.w3.org/2000/svg";
   var EMOJI_PATTERN = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}]/u;
+
+  var DEFAULT_ZONE = {
+    x: 0.1,
+    y: 0.42,
+    width: 0.8,
+    height: 0.16,
+    rotation: 0,
+    alignment: "CENTER",
+    textAlign: "CENTER",
+    minFontSize: 12,
+    maxFontSize: 26,
+    defaultFontSize: 18,
+    autoFit: true,
+    opacity: 1,
+    effect: null,
+    variantRules: [],
+  };
 
   function escapeForCharClass(str) {
     return str.replace(/[\]\\^-]/g, "\\$&");
@@ -75,6 +93,32 @@
     return parts.filter(Boolean).join(" ");
   }
 
+  function applyEffectToSvgText(el, effect) {
+    el.style.textShadow = "";
+    el.style.fontWeight = "normal";
+    el.style.opacity = "1";
+    switch (effect) {
+      case "ENGRAVING":
+        el.style.opacity = "0.55";
+        break;
+      case "EMBROIDERY":
+        el.style.textShadow = "0.5px 0.5px 0 rgba(0,0,0,0.35)";
+        break;
+      case "FOIL":
+        el.style.fontWeight = "700";
+        el.style.textShadow = "0 0 2px rgba(255,255,255,0.8)";
+        break;
+      case "DEBOSS":
+        el.style.textShadow = "-1px -1px 0 rgba(255,255,255,0.5),1px 1px 1px rgba(0,0,0,0.4)";
+        break;
+      case "EMBOSS":
+        el.style.textShadow = "1px 1px 0 rgba(255,255,255,0.6),-1px -1px 1px rgba(0,0,0,0.4)";
+        break;
+      default:
+        break;
+    }
+  }
+
   // Common product-media selectors across popular Shopify themes (Dawn and
   // Dawn-derived themes first, then older Timber-based conventions). Used to
   // attempt "Native Image Mode" — overlaying the personalization directly on
@@ -108,35 +152,64 @@
     return null;
   }
 
-  function setUpNativeOverlay(root) {
-    var container = findNativeImageContainer(root);
-    if (!container) return null;
-
-    if (getComputedStyle(container).position === "static") {
-      container.style.position = "relative";
-    }
-
-    var overlay = document.createElement("span");
-    overlay.className = "simple-monogram__preview-text simple-monogram__preview-text--native";
-    container.appendChild(overlay);
-    return overlay;
+  function createPreviewSvg() {
+    var svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", "simple-monogram__preview-svg");
+    var text = document.createElementNS(SVG_NS, "text");
+    svg.appendChild(text);
+    return { svg: svg, text: text };
   }
 
-  function effectStyle(effect) {
-    switch (effect) {
-      case "ENGRAVING":
-        return "opacity:0.55;";
-      case "EMBROIDERY":
-        return "text-shadow:0.5px 0.5px 0 rgba(0,0,0,0.35);";
-      case "FOIL":
-        return "font-weight:700;text-shadow:0 0 2px rgba(255,255,255,0.8);";
-      case "DEBOSS":
-        return "text-shadow:-1px -1px 0 rgba(255,255,255,0.5),1px 1px 1px rgba(0,0,0,0.4);";
-      case "EMBOSS":
-        return "text-shadow:1px 1px 0 rgba(255,255,255,0.6),-1px -1px 1px rgba(0,0,0,0.4);";
-      default:
-        return "";
+  function positionSvg(svg, container, zone) {
+    var rect = container.getBoundingClientRect();
+    var pxWidth = Math.max(1, rect.width * zone.width);
+    var pxHeight = Math.max(1, rect.height * zone.height);
+    svg.setAttribute("width", pxWidth);
+    svg.setAttribute("height", pxHeight);
+    svg.setAttribute("viewBox", "0 0 " + pxWidth + " " + pxHeight);
+    svg.style.left = zone.x * 100 + "%";
+    svg.style.top = zone.y * 100 + "%";
+    svg.style.width = zone.width * 100 + "%";
+    svg.style.height = zone.height * 100 + "%";
+    svg.style.transform = "rotate(" + zone.rotation + "deg)";
+    return { pxWidth: pxWidth, pxHeight: pxHeight };
+  }
+
+  // Reduces font size from maxSize down to minSize until the rendered text
+  // fits the zone's current pixel width (auto-fit), or reports overflow so
+  // the caller can block add-to-cart per the "overflow protection" rule.
+  function fitFontSize(textEl, content, pxWidth, minSize, maxSize, autoFit, defaultSize) {
+    textEl.textContent = content;
+    if (!content) return { fontSize: defaultSize, overflow: false };
+
+    var maxAllowedWidth = pxWidth * 0.94;
+
+    if (!autoFit) {
+      textEl.setAttribute("font-size", defaultSize);
+      var fixedLength = textEl.getComputedTextLength();
+      return { fontSize: defaultSize, overflow: fixedLength > maxAllowedWidth };
     }
+
+    var size = maxSize;
+    textEl.setAttribute("font-size", size);
+    var length = textEl.getComputedTextLength();
+    while (length > maxAllowedWidth && size > minSize) {
+      size -= 1;
+      textEl.setAttribute("font-size", size);
+      length = textEl.getComputedTextLength();
+    }
+    return { fontSize: size, overflow: length > maxAllowedWidth };
+  }
+
+  function normalizeVariantGid(rawId) {
+    if (!rawId) return null;
+    return /^\d+$/.test(rawId) ? "gid://shopify/ProductVariant/" + rawId : rawId;
+  }
+
+  function findVariantIdInput(root) {
+    var form = root.closest("form") || document.querySelector('form[action*="/cart/add"]');
+    if (!form) return null;
+    return form.querySelector('input[name="id"], select[name="id"]');
   }
 
   function initWidget(root) {
@@ -144,17 +217,27 @@
     var loadingEl = root.querySelector("[data-sm-loading]");
     var widgetEl = root.querySelector("[data-sm-widget]");
     var fieldsEl = root.querySelector("[data-sm-fields]");
+    var optionsEl = root.querySelector("[data-sm-options]");
     var previewWrap = root.querySelector("[data-sm-preview-image-wrap]");
     var previewImg = root.querySelector("[data-sm-preview-image]");
-    var previewText = root.querySelector("[data-sm-preview-text]");
     var previewUnavailable = root.querySelector("[data-sm-preview-unavailable]");
     var confirmEl = root.querySelector("[data-sm-confirm]");
     var confirmCheckbox = root.querySelector("[data-sm-confirm-checkbox]");
     var errorEl = root.querySelector("[data-sm-error]");
     var statusEl = root.querySelector("[data-sm-status]");
 
-    var state = { values: {}, config: null };
-    var nativeOverlay = null;
+    var state = {
+      values: {},
+      fieldErrors: {},
+      fieldKeys: [],
+      config: null,
+      selectedFontId: null,
+      selectedColorId: null,
+      currentVariantId: null,
+      overflow: false,
+      swatchesEl: null,
+    };
+    var previewTarget = null; // { svg, text, container, mode: 'native' | 'safe' }
 
     fetch("/apps/simple-monogram/proxy/config?productId=" + encodeURIComponent(productId), {
       headers: { Accept: "application/json" },
@@ -165,20 +248,44 @@
       .then(function (data) {
         if (!data.configured) return; // Product not configured — widget stays hidden.
         state.config = data;
-        nativeOverlay = setUpNativeOverlay(root);
-        render();
+        setup();
         root.hidden = false;
         loadingEl.hidden = true;
         widgetEl.hidden = false;
       })
       .catch(function () {
-        // Network/preview failure — fail closed and stay hidden rather than
+        // Network/proxy failure — fail closed and stay hidden rather than
         // show a broken widget.
       });
 
-    function render() {
+    function setup() {
       var template = state.config.template;
-      var keys = template.fields.map(function (f) {
+      state.selectedFontId = template.defaultFontId || (template.fonts[0] && template.fonts[0].id) || null;
+      state.selectedColorId = template.colors[0] ? template.colors[0].id : null;
+
+      buildFields();
+      buildOptions();
+      setupPreviewTarget();
+      setupVariantTracking();
+
+      if (template.confirmationRequired) {
+        confirmEl.hidden = false;
+        confirmCheckbox.addEventListener("change", updateStatus);
+      }
+
+      updatePreview();
+      updateStatus();
+
+      var resizeTimer = null;
+      window.addEventListener("resize", function () {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(updatePreview, 120);
+      });
+    }
+
+    function buildFields() {
+      var template = state.config.template;
+      state.fieldKeys = template.fields.map(function (f) {
         return f.key;
       });
 
@@ -193,7 +300,7 @@
         label.setAttribute("for", inputId);
 
         var input = document.createElement("input");
-        input.type = field.inputType === "DATE" ? "date" : field.inputType === "NUMBER" ? "text" : "text";
+        input.type = field.inputType === "DATE" ? "date" : "text";
         input.id = inputId;
         input.name = field.key;
         if (field.maxLength != null) input.maxLength = field.maxLength;
@@ -207,6 +314,7 @@
           if (value !== input.value) input.value = value;
           state.values[field.key] = value;
           var error = validateField(value, field);
+          state.fieldErrors[field.key] = error;
           errorText.textContent = error || "";
           errorText.hidden = !error;
           updatePreview();
@@ -218,87 +326,201 @@
         wrap.appendChild(errorText);
         fieldsEl.appendChild(wrap);
         state.values[field.key] = "";
+        state.fieldErrors[field.key] = validateField("", field);
       });
+    }
+
+    function buildOptions() {
+      var template = state.config.template;
+      optionsEl.innerHTML = "";
 
       if (template.fonts.length > 0) {
-        state.selectedFont = template.fonts[0];
+        var fontGroup = document.createElement("div");
+        fontGroup.className = "simple-monogram__option-group";
+        var fontLabel = document.createElement("label");
+        fontLabel.textContent = "Font";
+        var select = document.createElement("select");
+        template.fonts.forEach(function (font) {
+          var option = document.createElement("option");
+          option.value = font.id;
+          option.textContent = font.name;
+          select.appendChild(option);
+        });
+        select.value = state.selectedFontId || "";
+        select.addEventListener("change", function () {
+          state.selectedFontId = select.value;
+          updatePreview();
+        });
+        fontGroup.appendChild(fontLabel);
+        fontGroup.appendChild(select);
+        optionsEl.appendChild(fontGroup);
       }
+
       if (template.colors.length > 0) {
-        state.selectedColor = template.colors[0];
+        var colorGroup = document.createElement("div");
+        colorGroup.className = "simple-monogram__option-group";
+        var colorLabel = document.createElement("label");
+        colorLabel.textContent = "Color";
+        var swatches = document.createElement("div");
+        swatches.className = "simple-monogram__swatches";
+        state.swatchesEl = swatches;
+        renderColorSwatches();
+        colorGroup.appendChild(colorLabel);
+        colorGroup.appendChild(swatches);
+        optionsEl.appendChild(colorGroup);
       }
+    }
 
+    function getAllowedColorsForCurrentVariant() {
+      var template = state.config.template;
       var zone = state.config.zone;
-      var activePreviewEl = nativeOverlay || previewText;
+      if (!zone || !state.currentVariantId) return template.colors;
+      var rule = zone.variantRules.filter(function (r) {
+        return r.shopifyVariantId === state.currentVariantId;
+      })[0];
+      if (!rule || rule.allowedColorIds.length === 0) return template.colors;
+      return template.colors.filter(function (c) {
+        return rule.allowedColorIds.indexOf(c.id) !== -1;
+      });
+    }
 
-      if (zone && (nativeOverlay || zone.imageUrl)) {
-        if (nativeOverlay) {
-          previewWrap.hidden = true;
-        } else {
-          previewImg.src = zone.imageUrl;
-          previewWrap.hidden = false;
-          previewWrap.style.width = "100%";
+    function renderColorSwatches() {
+      var container = state.swatchesEl;
+      if (!container) return;
+      var allowed = getAllowedColorsForCurrentVariant();
+
+      if (!allowed.some(function (c) { return c.id === state.selectedColorId; }) && allowed.length > 0) {
+        state.selectedColorId = allowed[0].id;
+      }
+
+      container.innerHTML = "";
+      allowed.forEach(function (color) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "simple-monogram__swatch";
+        btn.style.background = color.hex;
+        btn.title = color.name;
+        btn.setAttribute("aria-label", color.name);
+        btn.setAttribute("aria-pressed", String(color.id === state.selectedColorId));
+        btn.addEventListener("click", function () {
+          state.selectedColorId = color.id;
+          renderColorSwatches();
+          updatePreview();
+        });
+        container.appendChild(btn);
+      });
+    }
+
+    function setupPreviewTarget() {
+      var zone = state.config.zone;
+      var nativeContainer = findNativeImageContainer(root);
+
+      if (nativeContainer) {
+        if (getComputedStyle(nativeContainer).position === "static") {
+          nativeContainer.style.position = "relative";
         }
-        previewUnavailable.hidden = true;
-        activePreviewEl.style.left = zone.x * 100 + "%";
-        activePreviewEl.style.top = zone.y * 100 + "%";
-        activePreviewEl.style.width = zone.width * 100 + "%";
-        activePreviewEl.style.height = zone.height * 100 + "%";
-        activePreviewEl.style.transform = "rotate(" + zone.rotation + "deg)";
-        activePreviewEl.style.fontSize = Math.min(zone.defaultFontSize, 28) + "px";
-        activePreviewEl.style.display = "flex";
-        activePreviewEl.style.alignItems = "center";
-        activePreviewEl.style.justifyContent =
-          zone.textAlign === "LEFT" ? "flex-start" : zone.textAlign === "RIGHT" ? "flex-end" : "center";
-        activePreviewEl.style.opacity = String(zone.opacity);
-        activePreviewEl.style.cssText += effectStyle(zone.effect || template.effect);
-      } else {
+        var native = createPreviewSvg();
+        nativeContainer.appendChild(native.svg);
+        previewTarget = { svg: native.svg, text: native.text, container: nativeContainer, mode: "native" };
         previewWrap.hidden = true;
-        previewUnavailable.hidden = !nativeOverlay;
-        if (nativeOverlay) {
-          // No saved zone, but we can still overlay plain centered text on
-          // the theme's real image rather than falling back to a message.
-          activePreviewEl.style.left = "10%";
-          activePreviewEl.style.top = "42%";
-          activePreviewEl.style.width = "80%";
-          activePreviewEl.style.height = "16%";
-          activePreviewEl.style.transform = "none";
-          activePreviewEl.style.fontSize = "20px";
-          activePreviewEl.style.display = "flex";
-          activePreviewEl.style.alignItems = "center";
-          activePreviewEl.style.justifyContent = "center";
-          activePreviewEl.style.opacity = "1";
-          activePreviewEl.style.cssText += effectStyle(template.effect);
+        previewUnavailable.hidden = true;
+        return;
+      }
+
+      if (zone && zone.imageUrl) {
+        previewImg.src = zone.imageUrl;
+        previewWrap.hidden = false;
+        previewWrap.style.width = "100%";
+        var safe = createPreviewSvg();
+        previewWrap.appendChild(safe.svg);
+        previewTarget = { svg: safe.svg, text: safe.text, container: previewWrap, mode: "safe" };
+        previewUnavailable.hidden = true;
+        return;
+      }
+
+      previewWrap.hidden = true;
+      previewUnavailable.hidden = false;
+      previewTarget = null;
+    }
+
+    function setupVariantTracking() {
+      var input = findVariantIdInput(root);
+      if (!input) return;
+      state.currentVariantId = normalizeVariantGid(input.value);
+
+      var form = input.closest("form") || document;
+      form.addEventListener("change", function () {
+        setTimeout(function () {
+          var newId = normalizeVariantGid(input.value);
+          if (newId === state.currentVariantId) return;
+          state.currentVariantId = newId;
+          onVariantChanged();
+        }, 50);
+      });
+    }
+
+    function onVariantChanged() {
+      var zone = state.config.zone;
+      if (zone && previewTarget && previewTarget.mode === "safe") {
+        var rule = zone.variantRules.filter(function (r) {
+          return r.shopifyVariantId === state.currentVariantId;
+        })[0];
+        if (rule && rule.previewImageUrl) {
+          previewImg.src = rule.previewImageUrl;
         }
       }
-
-      if (template.confirmationRequired) {
-        confirmEl.hidden = false;
-        confirmCheckbox.addEventListener("change", updateStatus);
-      }
-
-      root._smKeys = keys;
-      root._smTemplate = template;
+      renderColorSwatches();
       updatePreview();
       updateStatus();
     }
 
     function updatePreview() {
+      if (!previewTarget) return;
+
       var template = state.config.template;
-      var activePreviewEl = nativeOverlay || previewText;
-      var text = composeDisplayText(template.type, state.values, root._smKeys || []);
-      activePreviewEl.textContent = text;
-      if (state.selectedFont) {
-        activePreviewEl.style.fontFamily = state.selectedFont.family;
+      var zone = state.config.zone || DEFAULT_ZONE;
+      var text = composeDisplayText(template.type, state.values, state.fieldKeys);
+
+      var geometry = positionSvg(previewTarget.svg, previewTarget.container, zone);
+      var textEl = previewTarget.text;
+
+      var font = template.fonts.filter(function (f) { return f.id === state.selectedFontId; })[0];
+      textEl.style.fontFamily = font ? font.family : "inherit";
+
+      var pad = 4;
+      if (zone.textAlign === "LEFT") {
+        textEl.setAttribute("x", pad);
+        textEl.setAttribute("text-anchor", "start");
+      } else if (zone.textAlign === "RIGHT") {
+        textEl.setAttribute("x", geometry.pxWidth - pad);
+        textEl.setAttribute("text-anchor", "end");
+      } else {
+        textEl.setAttribute("x", geometry.pxWidth / 2);
+        textEl.setAttribute("text-anchor", "middle");
       }
-      if (state.selectedColor) {
-        activePreviewEl.style.color = state.selectedColor.hex;
-      }
+      textEl.setAttribute("y", geometry.pxHeight / 2);
+      textEl.setAttribute("dominant-baseline", "middle");
+
+      var color = template.colors.filter(function (c) { return c.id === state.selectedColorId; })[0];
+      textEl.setAttribute("fill", color ? color.hex : "#1a1a1a");
+      textEl.style.opacity = String(zone.opacity != null ? zone.opacity : 1);
+      applyEffectToSvgText(textEl, zone.effect || template.effect);
+
+      var fit = fitFontSize(
+        textEl,
+        text,
+        geometry.pxWidth,
+        zone.minFontSize,
+        zone.maxFontSize,
+        zone.autoFit,
+        zone.defaultFontSize,
+      );
+      state.overflow = fit.overflow;
     }
 
     function isValid() {
-      var template = state.config.template;
-      return template.fields.every(function (field) {
-        return !validateField(state.values[field.key] || "", field);
+      return state.fieldKeys.every(function (key) {
+        return !state.fieldErrors[key];
       });
     }
 
@@ -306,11 +528,15 @@
       var template = state.config.template;
       var valid = isValid();
       var confirmed = !template.confirmationRequired || (confirmCheckbox && confirmCheckbox.checked);
-      var ready = valid && confirmed;
+      var ready = valid && confirmed && !state.overflow;
 
       if (!valid) {
         statusEl.textContent = "";
         errorEl.textContent = "Please fix the highlighted field(s) above.";
+        errorEl.hidden = false;
+      } else if (state.overflow) {
+        statusEl.textContent = "";
+        errorEl.textContent = "Your personalization is too long for this design.";
         errorEl.hidden = false;
       } else if (!confirmed) {
         errorEl.hidden = true;
@@ -320,6 +546,9 @@
         statusEl.textContent = "Ready — this personalization can be added to cart.";
       }
 
+      var font = template.fonts.filter(function (f) { return f.id === state.selectedFontId; })[0];
+      var color = template.colors.filter(function (c) { return c.id === state.selectedColorId; })[0];
+
       root.dispatchEvent(
         new CustomEvent("simple-monogram:change", {
           bubbles: true,
@@ -327,9 +556,9 @@
             productId: productId,
             ready: ready,
             values: state.values,
-            displayText: composeDisplayText(template.type, state.values, root._smKeys || []),
-            font: state.selectedFont,
-            color: state.selectedColor,
+            displayText: composeDisplayText(template.type, state.values, state.fieldKeys),
+            font: font || null,
+            color: color || null,
             effect: (state.config.zone && state.config.zone.effect) || template.effect,
           },
         }),

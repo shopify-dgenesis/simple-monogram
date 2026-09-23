@@ -148,4 +148,52 @@ describe("getStorefrontConfig — widget appears only for configured products", 
     const resultForShopB = await getStorefrontConfig(shopB.domain, "1");
     expect(resultForShopB.configured).toBe(false);
   });
+
+  it("includes per-variant preview rules for variant-aware preview", async () => {
+    const shop = await makeShop();
+    const template = await createTemplate(shop.id, "STANDARD_TEXT", baseRules);
+    await assignProducts(shop.id, template.id, ["gid://shopify/Product/1"]);
+    const palette = await prisma.colorPalette.create({
+      data: { name: "Test Palette", isSystem: true },
+    });
+    const gold = await prisma.paletteColor.create({
+      data: { paletteId: palette.id, name: "Gold", hex: "#D4AF37" },
+    });
+    const zone = await upsertPreviewZone(shop.id, template.id, {
+      shopifyProductId: "gid://shopify/Product/1",
+      imageUrl: "https://cdn.shopify.com/1.png",
+      x: 0.4,
+      y: 0.4,
+      width: 0.2,
+      height: 0.1,
+      rotation: 0,
+      alignment: "CENTER",
+      textAlign: "CENTER",
+      minFontSize: 10,
+      maxFontSize: 30,
+      defaultFontSize: 18,
+      autoFit: true,
+      opacity: 1,
+      effect: null,
+    });
+    await prisma.variantPreviewRule.create({
+      data: {
+        previewZoneId: zone.id,
+        shopifyVariantId: "gid://shopify/ProductVariant/99",
+        previewImageUrl: "https://cdn.shopify.com/1-black.png",
+        allowedColors: { connect: [{ id: gold.id }] },
+      },
+    });
+
+    const result = await getStorefrontConfig(shop.domain, "1");
+    expect(result.configured).toBe(true);
+    if (result.configured) {
+      expect(result.zone?.variantRules).toHaveLength(1);
+      expect(result.zone?.variantRules[0]).toMatchObject({
+        shopifyVariantId: "gid://shopify/ProductVariant/99",
+        previewImageUrl: "https://cdn.shopify.com/1-black.png",
+        allowedColorIds: [gold.id],
+      });
+    }
+  });
 });

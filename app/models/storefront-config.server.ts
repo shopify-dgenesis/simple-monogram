@@ -13,6 +13,7 @@ export type StorefrontConfigResult =
         type: string;
         effect: string;
         confirmationRequired: boolean;
+        defaultFontId: string | null;
         fields: {
           key: string;
           label: string;
@@ -46,6 +47,11 @@ export type StorefrontConfigResult =
         autoFit: boolean;
         opacity: number;
         effect: string | null;
+        variantRules: {
+          shopifyVariantId: string;
+          previewImageUrl: string | null;
+          allowedColorIds: string[];
+        }[];
       } | null;
     };
 
@@ -82,6 +88,7 @@ export async function getStorefrontConfig(
         shopifyProductId,
       },
     },
+    include: { variantRules: { include: { allowedColors: { select: { id: true } } } } },
   });
 
   const { template } = assignment;
@@ -93,6 +100,7 @@ export async function getStorefrontConfig(
       type: template.type,
       effect: template.effect,
       confirmationRequired: template.confirmationRequired,
+      defaultFontId: template.defaultFontId,
       fields: template.fields.map((field) => ({
         key: field.key,
         label: field.label,
@@ -137,6 +145,11 @@ export async function getStorefrontConfig(
           autoFit: zone.autoFit,
           opacity: zone.opacity,
           effect: zone.effect,
+          variantRules: zone.variantRules.map((rule) => ({
+            shopifyVariantId: rule.shopifyVariantId,
+            previewImageUrl: rule.previewImageUrl,
+            allowedColorIds: rule.allowedColors.map((c) => c.id),
+          })),
         }
       : null,
   };

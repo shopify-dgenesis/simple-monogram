@@ -48,6 +48,43 @@
   font-size: 0.8em;
 }
 
+.simple-monogram__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.simple-monogram__option-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.simple-monogram__option-group label:first-child {
+  font-size: 0.85em;
+}
+
+.simple-monogram__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.simple-monogram__swatch {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  padding: 0;
+}
+
+.simple-monogram__swatch[aria-pressed="true"] {
+  border-color: currentColor;
+}
+
 .simple-monogram__preview {
   margin-bottom: 0.75rem;
 }
@@ -63,11 +100,10 @@
   border-radius: 6px;
 }
 
-.simple-monogram__preview-text {
+.simple-monogram__preview-svg {
   position: absolute;
-  white-space: nowrap;
   pointer-events: none;
-  line-height: 1;
+  overflow: hidden;
 }
 
 .simple-monogram__confirm {
