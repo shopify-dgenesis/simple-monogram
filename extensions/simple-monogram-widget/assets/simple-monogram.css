@@ -1,0 +1,96 @@
+.simple-monogram {
+  display: block;
+  margin: 1rem 0;
+  font-family: inherit;
+  color: inherit;
+}
+
+.simple-monogram[hidden] {
+  display: none !important;
+}
+
+.simple-monogram__heading {
+  font: inherit;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.simple-monogram__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.simple-monogram__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1 1 140px;
+}
+
+.simple-monogram__field label {
+  font-size: 0.85em;
+}
+
+.simple-monogram__field input,
+.simple-monogram__field select {
+  font: inherit;
+  padding: 0.5em 0.6em;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+}
+
+.simple-monogram__field-error {
+  color: #b91c1c;
+  font-size: 0.8em;
+}
+
+.simple-monogram__preview {
+  margin-bottom: 0.75rem;
+}
+
+.simple-monogram__preview-image-wrap {
+  position: relative;
+  max-width: 320px;
+}
+
+.simple-monogram__preview-image-wrap img {
+  width: 100%;
+  display: block;
+  border-radius: 6px;
+}
+
+.simple-monogram__preview-text {
+  position: absolute;
+  white-space: nowrap;
+  pointer-events: none;
+  line-height: 1;
+}
+
+.simple-monogram__confirm {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin-bottom: 0.5rem;
+  font-size: 0.9em;
+}
+
+.simple-monogram__error {
+  color: #b91c1c;
+  font-size: 0.9em;
+}
+
+.simple-monogram__status {
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+
+.simple-monogram--custom-styles {
+  padding: 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fafafa;
+}

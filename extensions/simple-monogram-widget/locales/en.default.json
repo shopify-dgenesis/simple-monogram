@@ -1,10 +1,8 @@
 {
-  "ratings": {
-    "stars": {
-      "label": "Ratings"
-    },
-    "home": {
-      "recommendationText": "Recommended Product!"
-    }
+  "simple_monogram": {
+    "loading": "Loading personalization…",
+    "heading": "Personalize your item",
+    "preview_unavailable": "Live preview isn't available for this product yet — your personalization will still be added to your order.",
+    "confirm_label": "I confirm that the spelling and personalization shown are correct."
   }
 }

@@ -1,0 +1,59 @@
+{% comment %}
+  Simple Monogram — product personalization widget.
+  Renders nothing on the server; the widget's own JS decides whether
+  this product is configured for personalization and swaps states.
+{% endcomment %}
+
+{{ 'simple-monogram.css' | asset_url | stylesheet_tag }}
+
+<div
+  class="simple-monogram{% unless block.settings.use_theme_styling %} simple-monogram--custom-styles{% endunless %}"
+  data-simple-monogram
+  data-product-id="{{ product.id }}"
+  hidden
+>
+  <p class="simple-monogram__state" data-sm-loading>
+    {{ 'simple_monogram.loading' | t }}
+  </p>
+
+  <div data-sm-widget hidden>
+    <h3 class="simple-monogram__heading">{{ 'simple_monogram.heading' | t }}</h3>
+
+    <div class="simple-monogram__fields" data-sm-fields></div>
+
+    <div class="simple-monogram__preview">
+      <div class="simple-monogram__preview-image-wrap" data-sm-preview-image-wrap hidden>
+        <img data-sm-preview-image alt="" />
+        <span class="simple-monogram__preview-text" data-sm-preview-text></span>
+      </div>
+      <p class="simple-monogram__state" data-sm-preview-unavailable hidden>
+        {{ 'simple_monogram.preview_unavailable' | t }}
+      </p>
+    </div>
+
+    <label class="simple-monogram__confirm" data-sm-confirm hidden>
+      <input type="checkbox" data-sm-confirm-checkbox />
+      <span>{{ 'simple_monogram.confirm_label' | t }}</span>
+    </label>
+
+    <p class="simple-monogram__error" data-sm-error hidden></p>
+    <p class="simple-monogram__status" data-sm-status></p>
+  </div>
+</div>
+
+<script src="{{ 'simple-monogram.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Simple Monogram",
+  "target": "section",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "use_theme_styling",
+      "label": "Use theme styling",
+      "default": true
+    }
+  ]
+}
+{% endschema %}
